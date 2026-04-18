@@ -27,6 +27,22 @@ type UserTodos struct {
 	Todos  []Todo `json:"todos"`
 }
 
+type CBRCurrency struct {
+	Date         string `json:"Date"`
+	PreviousDate string `json:"PreviousDate"`
+	PreviousURL  string `json:"PreviousURL"`
+	Timestamp    string `json:"Timestamp"`
+	Valute       map[string]struct {
+		ID       string  `json:"ID"`
+		NumCode  string  `json:"NumCode"`
+		CharCode string  `json:"CharCode"`
+		Nominal  int     `json:"Nominal"`
+		Name     string  `json:"Name"`
+		Value    float64 `json:"Value"`
+		Previous float64 `json:"Previous"`
+	} `json:"Valute"`
+}
+
 var todosData = make(map[int]*UserTodos)
 var nextID = 1
 
@@ -89,6 +105,8 @@ func main() {
 			return getPrice(c, "ripple")
 		case text == "цены" || text == "prices":
 			return getAllPrices(c)
+		case text == "usd" || text == "доллар" || text == "курс доллара":
+			return getUSDRate(c)
 		case text == "подписаться" || text == "subscribe":
 			return subscribeToPrices(c)
 		case text == "отписаться" || text == "unsubscribe":
@@ -102,11 +120,43 @@ func main() {
 	bot.Handle("/repeat_custom", repeatCustom)
 
 	bot.Handle("/prices", getAllPrices)
+	bot.Handle("/usd", getUSDRate)
 	bot.Handle("/subscribe", subscribeToPrices)
 	bot.Handle("/unsubscribe", unsubscribeFromPrices)
 
 	log.Println("Bot is running")
 	bot.Start()
+}
+
+func getUSDRate(c telebot.Context) error {
+	rate, err := fetchUSDRate()
+	if err != nil {
+		return c.Send(fmt.Sprintf("❌ Failed to get USD rate: %v", err))
+	}
+
+	return c.Send(fmt.Sprintf("💵 USD to RUB exchange rate:\n🇺🇸 1 USD = 🇷🇺 %.2f RUB\n\n📅 Updated: %s",
+		rate, time.Now().Format("02.01.2006 15:04:05")))
+}
+
+func fetchUSDRate() (float64, error) {
+	url := "https://www.cbr-xml-daily.ru/daily_json.js"
+
+	resp, err := httpGet(url)
+	if err != nil {
+		return 0, err
+	}
+
+	var currencyData CBRCurrency
+	err = json.Unmarshal(resp, &currencyData)
+	if err != nil {
+		return 0, err
+	}
+
+	if usdData, ok := currencyData.Valute["USD"]; ok {
+		return usdData.Value / float64(usdData.Nominal), nil
+	}
+
+	return 0, fmt.Errorf("USD rate not found")
 }
 
 func getPrice(c telebot.Context, cryptoID string) error {
@@ -144,9 +194,15 @@ func getAllPrices(c telebot.Context) error {
 		return c.Send("❌ Failed to get prices")
 	}
 
-	message := fmt.Sprintf("📊 Current Cryptocurrency Prices:\n\n💰 BTC: $%v\n💰 ETH: $%v\n💰 XRP: $%v\n\n🕐 Updated: %s",
-		btcPrice, ethPrice, xrpPrice, time.Now().Format("15:04:05"))
+	usdRate, err := fetchUSDRate()
+	if err == nil {
+		message := fmt.Sprintf("📊 Current Prices:\n\n💰 BTC: $%.2f USD\n💰 ETH: $%.2f USD\n💰 XRP: $%.2f USD\n💵 USD/RUB: %.2f ₽\n\n🕐 Updated: %s",
+			btcPrice, ethPrice, xrpPrice, usdRate, time.Now().Format("15:04:05"))
+		return c.Send(message)
+	}
 
+	message := fmt.Sprintf("📊 Current Cryptocurrency Prices:\n\n💰 BTC: $%.2f\n💰 ETH: $%.2f\n💰 XRP: $%.2f\n\n🕐 Updated: %s",
+		btcPrice, ethPrice, xrpPrice, time.Now().Format("15:04:05"))
 	return c.Send(message)
 }
 
@@ -211,8 +267,16 @@ func sendDailyPriceUpdates(bot *telebot.Bot) {
 		return
 	}
 
-	message := fmt.Sprintf("🌅 Good morning! Here are today's cryptocurrency prices at 10:00 AM:\n\n💰 BTC: $%v\n💰 ETH: $%v\n💰 XRP: $%v\n\nUse /prices to get the latest prices anytime!",
-		btcPrice, ethPrice, xrpPrice)
+	usdRate, err := fetchUSDRate()
+
+	var message string
+	if err == nil {
+		message = fmt.Sprintf("🌅 Good morning! Here are today's prices at 10:00 AM:\n\n💰 BTC: $%.2f\n💰 ETH: $%.2f\n💰 XRP: $%.2f\n💵 USD/RUB: %.2f ₽\n\nUse /prices to get the latest prices anytime!",
+			btcPrice, ethPrice, xrpPrice, usdRate)
+	} else {
+		message = fmt.Sprintf("🌅 Good morning! Here are today's cryptocurrency prices at 10:00 AM:\n\n💰 BTC: $%.2f\n💰 ETH: $%.2f\n💰 XRP: $%.2f\n\nUse /prices to get the latest prices anytime!",
+			btcPrice, ethPrice, xrpPrice)
+	}
 
 	for userID := range priceSubscribers {
 		user := &telebot.User{ID: userID}
