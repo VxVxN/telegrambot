@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -28,6 +30,8 @@ type UserTodos struct {
 var todosData = make(map[int]*UserTodos)
 var nextID = 1
 
+var priceSubscribers = make(map[int64]bool)
+
 func main() {
 	token := os.Getenv("BOT_TOKEN")
 	if token == "" {
@@ -46,23 +50,26 @@ func main() {
 	}
 
 	loadTodos()
+	loadSubscribers()
+
+	go startDailyPriceNotifications(bot)
 
 	bot.Handle(telebot.OnText, func(c telebot.Context) error {
 		text := strings.ToLower(c.Text())
 		userID := int(c.Sender().ID)
 
 		switch {
-		case text == "хелп", text == "help":
+		case text == "хелп" || text == "help":
 			data, err := os.ReadFile("help.txt")
 			if err != nil {
 				return err
 			}
 			return c.Send(string(data))
 
-		case text == "список", text == "list":
+		case text == "список" || text == "list":
 			return showTodayTodos(c, userID)
 
-		case text == "полный список", text == "full list":
+		case text == "полный список" || text == "full list":
 			return showAllTodos(c, userID)
 
 		case strings.HasPrefix(text, "добавить ") || strings.HasPrefix(text, "add "):
@@ -71,8 +78,21 @@ func main() {
 		case strings.HasPrefix(text, "удалить ") || strings.HasPrefix(text, "delete "):
 			return deleteTodo(c, userID, text)
 
-		case text == "очистить", text == "clear":
+		case text == "очистить" || text == "clear":
 			return clearTodos(c, userID)
+
+		case text == "eth":
+			return getPrice(c, "ethereum")
+		case text == "btc":
+			return getPrice(c, "bitcoin")
+		case text == "xrp":
+			return getPrice(c, "ripple")
+		case text == "цены" || text == "prices":
+			return getAllPrices(c)
+		case text == "подписаться" || text == "subscribe":
+			return subscribeToPrices(c)
+		case text == "отписаться" || text == "unsubscribe":
+			return unsubscribeFromPrices(c)
 		}
 		return nil
 	})
@@ -81,8 +101,198 @@ func main() {
 	bot.Handle("/repeat_weekly", repeatWeekly)
 	bot.Handle("/repeat_custom", repeatCustom)
 
+	bot.Handle("/prices", getAllPrices)
+	bot.Handle("/subscribe", subscribeToPrices)
+	bot.Handle("/unsubscribe", unsubscribeFromPrices)
+
 	log.Println("Bot is running")
 	bot.Start()
+}
+
+func getPrice(c telebot.Context, cryptoID string) error {
+	price, err := fetchCryptoPrice(cryptoID)
+	if err != nil {
+		return c.Send(fmt.Sprintf("❌ Failed to get %s price: %v", strings.ToUpper(cryptoID), err))
+	}
+
+	var symbol string
+	switch cryptoID {
+	case "ethereum":
+		symbol = "ETH"
+	case "bitcoin":
+		symbol = "BTC"
+	case "ripple":
+		symbol = "XRP"
+	}
+
+	return c.Send(fmt.Sprintf("💰 %s price: $%.2f USD", symbol, price))
+}
+
+func getAllPrices(c telebot.Context) error {
+	ethPrice, err := fetchCryptoPrice("ethereum")
+	if err != nil {
+		return c.Send("❌ Failed to get prices")
+	}
+
+	btcPrice, err := fetchCryptoPrice("bitcoin")
+	if err != nil {
+		return c.Send("❌ Failed to get prices")
+	}
+
+	xrpPrice, err := fetchCryptoPrice("ripple")
+	if err != nil {
+		return c.Send("❌ Failed to get prices")
+	}
+
+	message := fmt.Sprintf("📊 Current Cryptocurrency Prices:\n\n💰 BTC: $%v\n💰 ETH: $%v\n💰 XRP: $%v\n\n🕐 Updated: %s",
+		btcPrice, ethPrice, xrpPrice, time.Now().Format("15:04:05"))
+
+	return c.Send(message)
+}
+
+func subscribeToPrices(c telebot.Context) error {
+	userID := c.Sender().ID
+	if priceSubscribers[userID] {
+		return c.Send("✅ You are already subscribed to daily price notifications at 10:00 AM")
+	}
+
+	priceSubscribers[userID] = true
+	saveSubscribers()
+	return c.Send("✅ You have subscribed to daily price notifications at 10:00 AM!\nUse /unsubscribe to stop receiving notifications.")
+}
+
+func unsubscribeFromPrices(c telebot.Context) error {
+	userID := c.Sender().ID
+	if !priceSubscribers[userID] {
+		return c.Send("❌ You are not subscribed to price notifications")
+	}
+
+	delete(priceSubscribers, userID)
+	saveSubscribers()
+	return c.Send("✅ You have unsubscribed from daily price notifications")
+}
+
+func startDailyPriceNotifications(bot *telebot.Bot) {
+	for {
+		now := time.Now()
+		next := time.Date(now.Year(), now.Month(), now.Day(), 10, 0, 0, 0, now.Location())
+
+		if now.After(next) {
+			next = next.Add(24 * time.Hour)
+		}
+
+		waitDuration := next.Sub(now)
+		time.Sleep(waitDuration)
+
+		sendDailyPriceUpdates(bot)
+	}
+}
+
+func sendDailyPriceUpdates(bot *telebot.Bot) {
+	if len(priceSubscribers) == 0 {
+		return
+	}
+
+	ethPrice, err := fetchCryptoPrice("ethereum")
+	if err != nil {
+		log.Printf("Error fetching ETH price: %v", err)
+		return
+	}
+
+	btcPrice, err := fetchCryptoPrice("bitcoin")
+	if err != nil {
+		log.Printf("Error fetching BTC price: %v", err)
+		return
+	}
+
+	xrpPrice, err := fetchCryptoPrice("ripple")
+	if err != nil {
+		log.Printf("Error fetching XRP price: %v", err)
+		return
+	}
+
+	message := fmt.Sprintf("🌅 Good morning! Here are today's cryptocurrency prices at 10:00 AM:\n\n💰 BTC: $%v\n💰 ETH: $%v\n💰 XRP: $%v\n\nUse /prices to get the latest prices anytime!",
+		btcPrice, ethPrice, xrpPrice)
+
+	for userID := range priceSubscribers {
+		user := &telebot.User{ID: userID}
+		_, err := bot.Send(user, message)
+		if err != nil {
+			log.Printf("Error sending price notification to user %d: %v", userID, err)
+			if strings.Contains(err.Error(), "bot was blocked") {
+				delete(priceSubscribers, userID)
+				saveSubscribers()
+			}
+		}
+	}
+}
+
+func fetchCryptoPrice(cryptoID string) (float64, error) {
+	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd", cryptoID)
+
+	resp, err := httpGet(url)
+	if err != nil {
+		return 0, err
+	}
+
+	var result map[string]interface{}
+	err = json.Unmarshal(resp, &result)
+	if err != nil {
+		return 0, err
+	}
+
+	if priceData, ok := result[cryptoID].(map[string]interface{}); ok {
+		if price, ok := priceData["usd"].(float64); ok {
+			return price, nil
+		}
+	}
+
+	return 0, fmt.Errorf("price not found")
+}
+
+func httpGet(url string) ([]byte, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return body, nil
+}
+
+func saveSubscribers() {
+	data, err := json.Marshal(priceSubscribers)
+	if err != nil {
+		log.Printf("Error saving subscribers: %v", err)
+		return
+	}
+
+	err = os.WriteFile("subscribers.json", data, 0644)
+	if err != nil {
+		log.Printf("Error writing subscribers file: %v", err)
+	}
+}
+
+func loadSubscribers() {
+	data, err := os.ReadFile("subscribers.json")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		log.Printf("Error reading subscribers file: %v", err)
+		return
+	}
+
+	err = json.Unmarshal(data, &priceSubscribers)
+	if err != nil {
+		log.Printf("Error parsing subscribers data: %v", err)
+	}
 }
 
 func showTodayTodos(c telebot.Context, userID int) error {
