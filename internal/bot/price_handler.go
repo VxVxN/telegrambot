@@ -57,6 +57,11 @@ func (b *Bot) handleUnsubscribe(c telebot.Context) error {
 	return c.Send("You have unsubscribed from daily price notifications")
 }
 
+const (
+	dailyNotificationMaxAttempts = 5
+	dailyNotificationRetryDelay  = 1 * time.Minute
+)
+
 func (b *Bot) runDailyPriceNotifications() {
 	for {
 		now := time.Now()
@@ -65,30 +70,37 @@ func (b *Bot) runDailyPriceNotifications() {
 			next = next.Add(24 * time.Hour)
 		}
 		time.Sleep(time.Until(next))
-		b.sendDailyPriceUpdates()
+
+		for attempt := 1; attempt <= dailyNotificationMaxAttempts; attempt++ {
+			if err := b.sendDailyPriceUpdates(); err != nil {
+				log.Printf("Daily notification attempt %d/%d failed: %v", attempt, dailyNotificationMaxAttempts, err)
+				if attempt < dailyNotificationMaxAttempts {
+					time.Sleep(dailyNotificationRetryDelay)
+				}
+				continue
+			}
+			break
+		}
 	}
 }
 
-func (b *Bot) sendDailyPriceUpdates() {
+func (b *Bot) sendDailyPriceUpdates() error {
 	ids := b.subs.List()
 	if len(ids) == 0 {
-		return
+		return nil
 	}
 
 	btcPrice, err := b.currency.FetchCryptoPrice("bitcoin")
 	if err != nil {
-		log.Printf("Error fetching BTC price: %v", err)
-		return
+		return fmt.Errorf("fetch BTC price: %w", err)
 	}
 	ethPrice, err := b.currency.FetchCryptoPrice("ethereum")
 	if err != nil {
-		log.Printf("Error fetching ETH price: %v", err)
-		return
+		return fmt.Errorf("fetch ETH price: %w", err)
 	}
 	xrpPrice, err := b.currency.FetchCryptoPrice("ripple")
 	if err != nil {
-		log.Printf("Error fetching XRP price: %v", err)
-		return
+		return fmt.Errorf("fetch XRP price: %w", err)
 	}
 
 	msg := fmt.Sprintf("Good morning! Today's prices:\n\nBTC: $%.2f\nETH: $%.2f\nXRP: $%.2f",
@@ -108,4 +120,5 @@ func (b *Bot) sendDailyPriceUpdates() {
 			}
 		}
 	}
+	return nil
 }
