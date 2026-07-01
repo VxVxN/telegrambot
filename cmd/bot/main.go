@@ -28,9 +28,10 @@ func main() {
 
 	todos := storage.NewTodoStore("todos.json")
 	subs := storage.NewSubscriberStore("subscribers.json")
+	notifications := storage.NewNotificationStore("notification.json")
 	cur := currency.NewClient()
 
-	b := bot.New(tb, todos, subs, cur)
+	b := bot.New(tb, todos, subs, notifications, cur)
 	b.RegisterHandlers()
 
 	log.Println("Bot is running")

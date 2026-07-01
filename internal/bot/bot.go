@@ -8,18 +8,20 @@ import (
 )
 
 type Bot struct {
-	tb       *telebot.Bot
-	todos    *storage.TodoStore
-	subs     *storage.SubscriberStore
-	currency *currency.Client
+	tb            *telebot.Bot
+	todos         *storage.TodoStore
+	subs          *storage.SubscriberStore
+	notifications *storage.NotificationStore
+	currency      *currency.Client
 }
 
-func New(tb *telebot.Bot, todos *storage.TodoStore, subs *storage.SubscriberStore, cur *currency.Client) *Bot {
+func New(tb *telebot.Bot, todos *storage.TodoStore, subs *storage.SubscriberStore, notifications *storage.NotificationStore, cur *currency.Client) *Bot {
 	return &Bot{
-		tb:       tb,
-		todos:    todos,
-		subs:     subs,
-		currency: cur,
+		tb:            tb,
+		todos:         todos,
+		subs:          subs,
+		notifications: notifications,
+		currency:      cur,
 	}
 }
 

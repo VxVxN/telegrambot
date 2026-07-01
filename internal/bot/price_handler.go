@@ -57,30 +57,37 @@ func (b *Bot) handleUnsubscribe(c telebot.Context) error {
 	return c.Send("You have unsubscribed from daily price notifications")
 }
 
-const (
-	dailyNotificationMaxAttempts = 5
-	dailyNotificationRetryDelay  = 1 * time.Minute
-)
+const dailyNotificationHour = 10
 
+// runDailyPriceNotifications wakes up once per minute and checks the wall-clock
+// time instead of sleeping until a single precomputed moment. A long
+// time.Sleep is driven by the monotonic clock, so it pauses while the host is
+// suspended and overshoots the target by the suspend duration — which made
+// notifications arrive at random times or get skipped entirely.
+//
+// On each tick it sends today's notification if the scheduled time has already
+// passed and it hasn't been sent today yet. This is a catch-up: if the host was
+// off or asleep at 10:00 and comes back at, say, 11:30, the very first check
+// (which also runs immediately on startup) delivers the missed message. The
+// last successful date is persisted, so a mid-day restart never re-sends. On a
+// send error the date is not recorded, so the next tick retries until it works.
 func (b *Bot) runDailyPriceNotifications() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
 	for {
 		now := time.Now()
-		next := time.Date(now.Year(), now.Month(), now.Day(), 10, 0, 0, 0, now.Location())
-		if now.After(next) {
-			next = next.Add(24 * time.Hour)
-		}
-		time.Sleep(time.Until(next))
+		today := now.Format("2006-01-02")
+		scheduled := time.Date(now.Year(), now.Month(), now.Day(), dailyNotificationHour, 0, 0, 0, now.Location())
 
-		for attempt := 1; attempt <= dailyNotificationMaxAttempts; attempt++ {
+		if !now.Before(scheduled) && b.notifications.LastSent() != today {
 			if err := b.sendDailyPriceUpdates(); err != nil {
-				log.Printf("Daily notification attempt %d/%d failed: %v", attempt, dailyNotificationMaxAttempts, err)
-				if attempt < dailyNotificationMaxAttempts {
-					time.Sleep(dailyNotificationRetryDelay)
-				}
-				continue
+				log.Printf("Daily notification failed, will retry next minute: %v", err)
+			} else {
+				b.notifications.SetLastSent(today)
 			}
-			break
 		}
+		<-ticker.C
 	}
 }
 
