@@ -37,6 +37,8 @@ func (b *Bot) handleText(c telebot.Context) error {
 		return b.handleSubscribe(c)
 	case text == "отписаться" || text == "unsubscribe":
 		return b.handleUnsubscribe(c)
+	case text == "новости" || text == "news":
+		return b.handleNews(c)
 	}
 	return nil
 }

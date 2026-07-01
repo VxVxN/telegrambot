@@ -45,16 +45,16 @@ func (b *Bot) handleUSDRate(c telebot.Context) error {
 
 func (b *Bot) handleSubscribe(c telebot.Context) error {
 	if !b.subs.Subscribe(c.Sender().ID) {
-		return c.Send("You are already subscribed to daily price notifications at 10:00 AM")
+		return c.Send("You are already subscribed to daily prices (10:00 AM) and Go blog news")
 	}
-	return c.Send("You have subscribed to daily price notifications at 10:00 AM!\nUse /unsubscribe to stop.")
+	return c.Send("You have subscribed to daily prices at 10:00 AM and new Go blog posts!\nUse /unsubscribe to stop.")
 }
 
 func (b *Bot) handleUnsubscribe(c telebot.Context) error {
 	if !b.subs.Unsubscribe(c.Sender().ID) {
-		return c.Send("You are not subscribed to price notifications")
+		return c.Send("You are not subscribed to notifications")
 	}
-	return c.Send("You have unsubscribed from daily price notifications")
+	return c.Send("You have unsubscribed from daily prices and Go blog news")
 }
 
 const dailyNotificationHour = 10

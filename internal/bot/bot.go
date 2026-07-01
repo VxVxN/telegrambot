@@ -4,6 +4,7 @@ import (
 	"gopkg.in/telebot.v3"
 
 	"github.com/VxVxN/telegrambot/internal/currency"
+	"github.com/VxVxN/telegrambot/internal/news"
 	"github.com/VxVxN/telegrambot/internal/storage"
 )
 
@@ -12,16 +13,20 @@ type Bot struct {
 	todos         *storage.TodoStore
 	subs          *storage.SubscriberStore
 	notifications *storage.NotificationStore
+	newsState     *storage.NewsStore
 	currency      *currency.Client
+	news          *news.Client
 }
 
-func New(tb *telebot.Bot, todos *storage.TodoStore, subs *storage.SubscriberStore, notifications *storage.NotificationStore, cur *currency.Client) *Bot {
+func New(tb *telebot.Bot, todos *storage.TodoStore, subs *storage.SubscriberStore, notifications *storage.NotificationStore, newsState *storage.NewsStore, cur *currency.Client, newsClient *news.Client) *Bot {
 	return &Bot{
 		tb:            tb,
 		todos:         todos,
 		subs:          subs,
 		notifications: notifications,
+		newsState:     newsState,
 		currency:      cur,
+		news:          newsClient,
 	}
 }
 
@@ -37,5 +42,8 @@ func (b *Bot) RegisterHandlers() {
 	b.tb.Handle("/subscribe", b.handleSubscribe)
 	b.tb.Handle("/unsubscribe", b.handleUnsubscribe)
 
+	b.tb.Handle("/news", b.handleNews)
+
 	go b.runDailyPriceNotifications()
+	go b.runNewsNotifications()
 }

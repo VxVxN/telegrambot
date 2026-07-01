@@ -9,6 +9,7 @@ import (
 
 	"github.com/VxVxN/telegrambot/internal/bot"
 	"github.com/VxVxN/telegrambot/internal/currency"
+	"github.com/VxVxN/telegrambot/internal/news"
 	"github.com/VxVxN/telegrambot/internal/storage"
 )
 
@@ -29,9 +30,11 @@ func main() {
 	todos := storage.NewTodoStore("todos.json")
 	subs := storage.NewSubscriberStore("subscribers.json")
 	notifications := storage.NewNotificationStore("notification.json")
+	newsState := storage.NewNewsStore("news.json")
 	cur := currency.NewClient()
+	newsClient := news.NewClient()
 
-	b := bot.New(tb, todos, subs, notifications, cur)
+	b := bot.New(tb, todos, subs, notifications, newsState, cur, newsClient)
 	b.RegisterHandlers()
 
 	log.Println("Bot is running")
