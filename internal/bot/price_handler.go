@@ -57,7 +57,7 @@ func (b *Bot) handleUnsubscribe(c telebot.Context) error {
 	return c.Send("You have unsubscribed from daily prices and Go blog news")
 }
 
-const dailyNotificationHour = 10
+const dailyNotificationHour = 11
 
 // runDailyPriceNotifications wakes up once per minute and checks the wall-clock
 // time instead of sleeping until a single precomputed moment. A long
@@ -118,14 +118,23 @@ func (b *Bot) sendDailyPriceUpdates() error {
 	}
 	msg += "\n\nUse /prices for latest prices anytime!"
 
+	var failed int
 	for _, userID := range ids {
 		user := &telebot.User{ID: userID}
 		if _, err := b.tb.Send(user, msg); err != nil {
 			log.Printf("Error sending notification to user %d: %v", userID, err)
+			// A blocked bot is a permanent condition, not a transient
+			// delivery failure: drop the subscriber and don't let it force
+			// a retry of the whole batch.
 			if strings.Contains(err.Error(), "bot was blocked") {
 				b.subs.Remove(userID)
+				continue
 			}
+			failed++
 		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("failed to deliver daily notification to %d user(s)", failed)
 	}
 	return nil
 }
