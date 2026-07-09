@@ -1,20 +1,27 @@
 package currency
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
-type cbrResponse struct {
-	Valute map[string]cbrCurrency `json:"Valute"`
+type cbrValCurs struct {
+	Valute []cbrValute `xml:"Valute"`
 }
 
-type cbrCurrency struct {
-	Nominal int     `json:"Nominal"`
-	Value   float64 `json:"Value"`
+type cbrValute struct {
+	CharCode string `xml:"CharCode"`
+	Nominal  int    `xml:"Nominal"`
+	Value    string `xml:"Value"`
 }
 
 type coinGeckoResponse map[string]struct {
@@ -57,25 +64,49 @@ func (c *Client) FetchCryptoPrice(cryptoID string) (float64, error) {
 }
 
 func (c *Client) FetchUSDRate() (float64, error) {
-	body, err := c.get("https://www.cbr-xml-daily.ru/daily_json.js")
+	body, err := c.get("https://www.cbr.ru/scripts/XML_daily.asp")
 	if err != nil {
 		return 0, err
 	}
 
-	var resp cbrResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
+	// The feed is served as windows-1251 XML; decode it so the Cyrillic name
+	// fields don't trip the decoder's UTF-8 validation.
+	dec := xml.NewDecoder(bytes.NewReader(body))
+	dec.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) {
+		return charmap.Windows1251.NewDecoder().Reader(input), nil
+	}
+
+	var resp cbrValCurs
+	if err := dec.Decode(&resp); err != nil {
 		return 0, fmt.Errorf("parse response: %w", err)
 	}
 
-	usd, ok := resp.Valute["USD"]
-	if !ok {
-		return 0, fmt.Errorf("USD rate not found")
+	for _, v := range resp.Valute {
+		if v.CharCode != "USD" {
+			continue
+		}
+		// CBR uses a comma as the decimal separator ("76,4026").
+		value, err := strconv.ParseFloat(strings.Replace(v.Value, ",", ".", 1), 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse USD value %q: %w", v.Value, err)
+		}
+		if v.Nominal == 0 {
+			v.Nominal = 1
+		}
+		return value / float64(v.Nominal), nil
 	}
-	return usd.Value / float64(usd.Nominal), nil
+	return 0, fmt.Errorf("USD rate not found")
 }
 
 func (c *Client) get(url string) ([]byte, error) {
-	resp, err := c.http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	// cbr.ru returns 403 to the default Go user agent, so present a browser one.
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; telegrambot/1.0)")
+
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
